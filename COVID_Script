@@ -1,0 +1,157 @@
+-- Select Data that we are going to be using
+
+SELECT LOCATION, date, TOTAL_CASES,
+	NEW_CASES,
+	TOTAL_DEATHS,
+	POPULATION
+FROM PUBLIC.COVIDDEATHS
+ORDER BY 1, 2;
+
+-- Looking at Total Cases vs Total Deaths
+
+SELECT location, date, TOTAL_CASES,
+	TOTAL_DEATHS, 
+	(NULLIF(total_deaths, '')::numeric / NULLIF(total_cases, '')::numeric)*100 AS DeathPercentage
+FROM PUBLIC.COVIDDEATHS
+ORDER BY 1, 2;
+
+-- Total cases vs Population
+-- What % of population got infected by COVID-19
+SELECT LOCATION,
+	TO_DATE(date, 'dd/mm/yyyy'),
+	POPULATION,
+	TOTAL_CASES,
+	(NULLIF(TOTAL_CASES, '')::numeric / NULLIF(POPULATION, '')::numeric) * 100 AS InfectionRate
+FROM PUBLIC.COVIDDEATHS
+WHERE LOCATION like 'Ireland'
+ORDER BY 1, 2;
+
+
+-- Countries with highest Infection Rate compared to Population
+
+SELECT LOCATION,
+	POPULATION,
+	MAX(TOTAL_CASES) as HighestInfectionCount,
+	MAX((NULLIF(TOTAL_CASES, '')::numeric / NULLIF(POPULATION, '')::numeric)) * 100 AS PercentPopulationInfected
+FROM PUBLIC.COVIDDEATHS
+-- WHERE percentpopulationinfected IS NOT NULL
+GROUP BY Location, Population
+ORDER BY PercentPopulationInfected DESC;
+
+-- Continents with the Highest Death Count
+
+SELECT LOCATION,
+	MAX(NULLIF(total_deaths, '')::numeric) as TotalDeathCount
+FROM PUBLIC.COVIDDEATHS
+-- WHERE percentpopulationinfected IS NOT NULL
+WHERE continent='' AND total_deaths<>''
+GROUP BY Location
+ORDER BY TotalDeathCount DESC; 
+
+
+-- Countries with Highest Death Count per Population
+
+SELECT LOCATION,
+	MAX(NULLIF(total_deaths, '')::numeric) as TotalDeathCount
+FROM PUBLIC.COVIDDEATHS
+-- WHERE percentpopulationinfected IS NOT NULL
+WHERE continent<>'' AND total_deaths<>''
+GROUP BY Location
+ORDER BY TotalDeathCount DESC; 
+
+
+-- GLOBAL NUMBERS
+
+SELECT TO_DATE(date, 'dd/mm/yyyy') as dates, 
+	SUM(NULLIF(new_cases, '')::numeric) as total_cases,
+	SUM(NULLIF(new_deaths, '')::numeric) as total_deaths, 
+	(SUM(NULLIF(new_deaths, '')::numeric) / SUM(NULLIF(new_cases, '')::numeric))*100 AS DeathPercentage
+FROM PUBLIC.COVIDDEATHS
+WHERE continent<>''
+GROUP BY dates
+ORDER BY 1, 2;
+
+
+-- Looking at Total Population vs. Vaccinations
+
+SELECT DEA.CONTINENT,
+	DEA.LOCATION,
+	TO_DATE(DEA.DATE, 'dd/mm/yyyy'),
+	DEA.POPULATION,
+	VAC.NEW_VACCINATIONS,
+	SUM(NULLIF(VAC.NEW_VACCINATIONS, '')::numeric) OVER (PARTITION BY DEA.LOCATION ORDER BY DEA.LOCATION, DEA.DATE) AS RollingPeopleVaccinated,
+	
+FROM PUBLIC.COVIDDEATHS DEA
+JOIN PUBLIC.COVIDVACCINATIONS VAC ON DEA.LOCATION = VAC.LOCATION
+AND DEA.DATE = VAC.DATE
+WHERE DEA.CONTINENT <> ''
+ORDER BY 2, 3
+
+
+-- USE CTE
+
+WITH PopvsVac (continent, location, date, population, new_vaccinations, RollingPeopleVaccinated)
+AS
+(
+SELECT DEA.CONTINENT,
+	DEA.LOCATION,
+	TO_DATE(DEA.DATE, 'dd/mm/yyyy'),
+	DEA.POPULATION,
+	VAC.NEW_VACCINATIONS,
+	SUM(NULLIF(VAC.NEW_VACCINATIONS, '')::numeric) OVER (PARTITION BY DEA.LOCATION ORDER BY DEA.LOCATION, DEA.DATE) AS RollingPeopleVaccinated
+	-- (RollingPeopleVaccinated/population)*100
+FROM PUBLIC.COVIDDEATHS DEA
+JOIN PUBLIC.COVIDVACCINATIONS VAC ON DEA.LOCATION = VAC.LOCATION
+AND DEA.DATE = VAC.DATE
+WHERE DEA.CONTINENT <> ''
+-- ORDER BY 2, 3
+	)
+SELECT *, (RollingPeopleVaccinated / (NULLIF(population, '')::numeric)) *100
+from popvsvac
+
+
+-- TEMP TABLE
+DROP TABLE IF EXISTS PercentPopulationVaccinated
+CREATE TEMPORARY TABLE PercentPopulationVaccinated
+(
+Continent varchar(255),
+Location varchar(255), 
+Date DATE, 
+Population numeric,
+new_vaccinations numeric,
+RollingPeopleVaccinated numeric
+);
+
+INSERT INTO PercentPopulationVaccinated
+SELECT DEA.CONTINENT,
+	DEA.LOCATION,
+	TO_DATE(DEA.DATE, 'dd/mm/yyyy'),
+	NULLIF(DEA.POPULATION, '')::numeric,
+	NULLIF(VAC.NEW_VACCINATIONS, '')::numeric,
+	SUM(NULLIF(VAC.NEW_VACCINATIONS, '')::numeric) OVER (PARTITION BY DEA.LOCATION ORDER BY DEA.LOCATION, DEA.DATE) AS RollingPeopleVaccinated
+	-- (RollingPeopleVaccinated/population)*100
+FROM PUBLIC.COVIDDEATHS DEA
+JOIN PUBLIC.COVIDVACCINATIONS VAC ON DEA.LOCATION = VAC.LOCATION
+AND DEA.DATE = VAC.DATE
+WHERE DEA.CONTINENT <> ''
+-- ORDER BY 2, 3
+
+SELECT *, (RollingPeopleVaccinated / population) *100
+from PercentPopulationVaccinated;
+
+
+-- Creating View to Store data for Data Viz
+
+CREATE VIEW PercentPopulationVaccinated AS
+SELECT DEA.CONTINENT,
+	DEA.LOCATION,
+	TO_DATE(DEA.DATE, 'dd/mm/yyyy'),
+	NULLIF(DEA.POPULATION, '')::numeric,
+	NULLIF(VAC.NEW_VACCINATIONS, '')::numeric as Vac,
+	SUM(NULLIF(VAC.NEW_VACCINATIONS, '')::numeric) OVER (PARTITION BY DEA.LOCATION ORDER BY DEA.LOCATION, DEA.DATE) AS RollingPeopleVaccinated
+	-- (RollingPeopleVaccinated/population)*100
+FROM PUBLIC.COVIDDEATHS DEA
+JOIN PUBLIC.COVIDVACCINATIONS VAC ON DEA.LOCATION = VAC.LOCATION
+AND DEA.DATE = VAC.DATE
+WHERE DEA.CONTINENT <> ''
+-- ORDER BY 2, 3
